@@ -31,8 +31,7 @@ function reformat(stockHistory) {
 const Home = () => {
   const stock_ws_endpoint = "ws://localhost:8080"
 
-//   const { status: b,  } = useFetch('http://localhost:8080/stocks')
-// watched stocks...
+  const [selectedStock, setSelectedStock] = useState(-1)
 
   const [tickers, setTickers] = useState([]);
   const [stockData, setStockChartData] = useState([])
@@ -41,20 +40,24 @@ const Home = () => {
     sendMessage, 
     lastMessage: wsMessage, 
     readyState: wsStatus 
-  } = useWebSocket(stock_ws_endpoint, { 
-    // shouldReconnect: () => true,
-  })
+  } = useWebSocket(stock_ws_endpoint)
 
+
+  useEffect(() => {
+    if(selectedStock === -1)
+      return
+    const ticker = tickers[selectedStock]
+    console.log(`selected stock: ${ticker}`)
+    console.log(`requesting from websocket...`)
+    sendMessage(JSON.stringify({ type: 'subscribe',body: ticker }))
+  }, [selectedStock])
 
 
   // Run when the connection state (readyState) changes
   useEffect(() => {
-    console.log("Connection state changed")
+    console.log("...connection changed...")
     if (wsStatus === ReadyState.OPEN) {
-        console.log('ws open')
-        sendMessage(
-            JSON.stringify({ body: stockSymbol, type: 'stock-history' })
-        )
+        console.log('websocket connection open')    
     }
   }, [wsStatus])
 
@@ -62,24 +65,16 @@ const Home = () => {
   useEffect(() => {
     if(!wsMessage)
         return
-    console.log(wsMessage.data) 
     let response 
-    try{
-        response = JSON.parse(wsMessage.data)
-        console.log('ok')
-        if(response.type === 'cors') {
-            console.error('CORS error')
-        }
-    } catch {
-        console.log('AAAAAHH', wsMessage)
-    }
+    response = JSON.parse(wsMessage.data)
 
-    console.log('ws msg:', response)
-
-    if(response.type === 'stock-history') {
+    console.log(`websocket message received. type: ${response.type}`)
+    if(response.type === 'stock-batch') {
         setStockChartData(reformat(response.data))
-        sendMessage(JSON.stringify({ type: 'live-update' }))
-    } else if (response.type === 'live-update') {
+    } else if (response.type === 'stock-update') {
+        if(stockData.length === 0) {
+            return
+        }
         const { date, high, low, open, close, volume } = response.data
         const temp = {
             date: new Date(date),
@@ -98,8 +93,9 @@ const Home = () => {
   // add and remove list maybe?... plus minus component from somewhere...
 
 
-    // a mini bank of prewritten stock symbols for use... mayb frmo a query..
-    const { status, data: stocksResponse } = useFetch('http://localhost:8080/stocks')
+    // get stock symbols 
+    const { status, data: stocksResponse } = useFetch('http://localhost:8080/stocks', selectedStock === -1 && stockData.length === 0)
+
     if(status ==='fetched' && !tickers.length) {
         setTickers(stocksResponse.rows.map(r => r.ticker))
     }
@@ -110,6 +106,10 @@ const Home = () => {
         
         await fetch(`http://localhost:8080/stocks/${symbolToRemove}`, { method: 'DELETE'})
         setTickers(tickers.filter(t => t !== symbolToRemove))
+        setSelectedStock(-1)
+        setStockChartData([])
+        
+        sendMessage(JSON.stringify({ type:'unsubscribe', symbolToRemove }))
         return
     }
 
@@ -123,28 +123,28 @@ const Home = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height:'100%', justifyContent:'center' }}>
-        
         <div style={{ display: 'flex', flexDirection: 'column'}}>
         </div>
-            <div>
-                <button onClick={(e) => {
-                    addToWatchlist(stockSymbol)
-                }}>
-                    Add stock symbol
-                </button>
-                <input value={stockSymbol} onChange={(e) => {setStockSymbol(e.target.value)}}></input>
-            </div>
+
 
 <div style={{ display:'flex', flexDirection:'row'}}>
     
     <Paper style={{width:175 }} variant='outlined' elevation={0}>
+
+        {
+        selectedStock === -1 ?
+        <>WATCHING NO STOCKS</> 
+        :   
+        <>WATCHING {tickers[selectedStock]}</>
+        }
+
         <List>
         { status === 'fetched' ? 
                 tickers.map((stockSymbol, i) => 
                 <ListItem key={i} disablePadding>
                     <ListItemButton onClick={(e) => {
-                        const symbolToRemove = e.currentTarget.textContent
-                        removeFromWatchlist(symbolToRemove)
+                        const stockClicked = e.currentTarget.textContent
+                        setSelectedStock(tickers.indexOf(stockClicked))
                     }}>
                         <ListItemText primary={stockSymbol} />
                     </ListItemButton>
@@ -154,6 +154,17 @@ const Home = () => {
             <></>
         }
         </List>
+        <button onClick={(e) => {
+            removeFromWatchlist(tickers[selectedStock])
+        }}>remove selected stock</button>
+        <div>
+                <button onClick={(e) => {
+                    addToWatchlist(stockSymbol)
+                }}>
+                    Add stock symbol
+                </button>
+                <input value={stockSymbol} onChange={(e) => {setStockSymbol(e.target.value)}}></input>
+            </div>
         </Paper>
 
         <BasicCandlestick
